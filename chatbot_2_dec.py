@@ -50,8 +50,8 @@ NEO4J_PASSWORD = os.getenv('NEO4J_PASSWORD', "vipani@123")
 
 # Qdrant Vector DB Config
 QDRANT_URL = os.getenv('QDRANT_URL', 'http://localhost:6333')
-COLLECTION_NAME = os.getenv('COLLECTION_NAME', 'chatbot_embeddings')
-EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', 'all-MiniLM-L6-v2')
+COLLECTION_NAME = os.getenv('COLLECTION_NAME', 'chatbot')
+EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', 'BAAI/bge-base-en-v1.5')
 
 # Ollama Config
 OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', "http://localhost:11434")
@@ -64,6 +64,55 @@ OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', "openai/gpt-oss-120b")
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+# ========== SMART DISPLAY HELPERS ==========
+def smart_truncate(text: str, max_length: int = 400) -> str:
+    """
+    Truncate text at word boundaries and preferably at sentence boundaries
+    Always shows complete words, never cuts mid-word
+    """
+    if len(text) <= max_length:
+        return text
+    
+    # Find the last space before max_length (word boundary)
+    truncated = text[:max_length]
+    last_space = truncated.rfind(' ')
+    
+    if last_space > 0:
+        truncated = truncated[:last_space]
+    
+    # Try to end at a sentence boundary (., !, ?)
+    for i in range(len(truncated) - 1, max(0, len(truncated) - 100), -1):
+        if truncated[i] in '.!?':
+            return truncated[:i+1]
+    
+    return truncated + '...'
+
+def find_sentence_start(text: str) -> str:
+    """
+    Try to find the start of a complete sentence
+    Returns text from the first capital letter after a period if found
+    """
+    # If text already starts with capital, return as-is
+    if text and text[0].isupper():
+        return text
+    
+    # Look for first sentence boundary followed by capital letter
+    for i in range(min(200, len(text))):
+        if i > 0 and text[i-1] in '.!?' and i < len(text) - 1:
+            # Skip spaces after punctuation
+            j = i
+            while j < len(text) and text[j] in ' \n\t':
+                j += 1
+            
+            # Check if next char is capital letter
+            if j < len(text) and text[j].isupper():
+                return text[j:]
+    
+    # If no sentence boundary found, return original
+    return text
+
 
 # ========== OPENROUTER CLIENT ==========
 class OpenRouterClient:
@@ -226,7 +275,7 @@ class VectorSearcher:
             logger.error(traceback.format_exc())
     
     def search(self, query: str, limit: int = 10, score_threshold: float = 0.25) -> List[Dict[str, Any]]:
-        """Search vector database with lower threshold for more results"""
+        """Search vector database - FIXED to use actual payload fields"""
         if not self.connected:
             return []
             
@@ -234,7 +283,7 @@ class VectorSearcher:
             # Create query embedding
             query_embedding = self.embedding_model.embed_text(query)
             
-            # Search Qdrant with lower threshold to get more results
+            # Search Qdrant
             search_results = self.qdrant_client.search(
                 collection_name=self.collection_name,
                 query_vector=query_embedding,
@@ -243,18 +292,34 @@ class VectorSearcher:
                 with_payload=True
             )
             
-            # Format results
+            # Format results using ACTUAL payload fields from your ingestion
             results = []
             for result in search_results:
+                payload = result.payload
+                
+                # Get full content
+                full_content = payload.get('text', '')
+                
+                # Smart truncation for display
+                display_content = find_sentence_start(full_content)  # Start at sentence if possible
+                display_content = smart_truncate(display_content, 400)  # Truncate at word boundary
+                
+                # Build field_name from available fields
+                file_type = payload.get('file_type', 'unknown')
+                content_type = payload.get('content_type', 'general')
+                field_name = f"{file_type}: {content_type}"
+                
                 results.append({
-                    'content': result.payload.get('text', ''),
-                    'header': result.payload.get('header', 'No header'),
-                    'field_name': result.payload.get('field_name', 'unknown'),
+                    'content': display_content,  # ← Now smart truncated!
+                    'full_content': full_content,  # ← Keep full for LLM
+                    'header': smart_truncate(payload.get('header', 'No header'), 100),  # ← Smart truncate header too
+                    'field_name': field_name,
                     'score': float(result.score),
                     'source_type': 'vector_db',
-                    'record_id': result.payload.get('record_id', -1),
-                    'chunk_index': result.payload.get('chunk_index', 0),
-                    'total_chunks': result.payload.get('total_chunks', 1)
+                    'source_file': payload.get('source_file', 'unknown'),
+                    'primary_chunk_index': payload.get('primary_chunk_index', 0),
+                    'sub_chunk_index': payload.get('sub_chunk_index', 0),
+                    'total_sub_chunks': payload.get('total_sub_chunks', 1)
                 })
             
             return results
@@ -262,7 +327,6 @@ class VectorSearcher:
         except Exception as e:
             logger.error(f"Vector search failed: {e}")
             return []
-
 # ========== KNOWLEDGE GRAPH CONNECTION ==========
 @st.cache_resource
 def init_fast_querier():
@@ -416,7 +480,8 @@ def generate_unified_answer(question: str, vector_results: List[Dict], kg_result
     if vector_results:
         context_parts.append("=== INFORMATION FROM VECTOR DATABASE ===")
         for i, result in enumerate(vector_results[:12], 1):
-            context_parts.append(f"{i}. [{result['field_name']}] {result['content'][:400]}")
+            full_text = result.get('full_content', result.get('content', ''))
+            context_parts.append(f"{i}. [{result['field_name']}] {full_text[:600]}")
     
     # Add knowledge graph results (increased from 12 to 20)
     if kg_results:

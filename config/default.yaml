@@ -26,7 +26,7 @@ validation:
 
 # Knowledge Graph Extraction Settings
 extraction:
-  spacy_model: "en_core_web_sm"
+  spacy_model: "en_core_web_trf"
   batch_size: 50
   enable_all_methods: true
   methods:
@@ -81,9 +81,9 @@ output:
 # Neo4j Settings with Optimization
 neo4j:
   enabled: true
-  uri: "bolt://192.168.9.175:7687"  # ← NEW PORT
+  uri: "bolt://localhost:7688"  # ← NEW PORT
   username: "neo4j"
-  password: "vipani@123"  # ← SIMPLE PASSWORD
+  password: "12345678"  # ← SIMPLE PASSWORD
   clear_database: false
   confidence_threshold: 0.0
   
