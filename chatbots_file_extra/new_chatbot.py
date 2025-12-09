@@ -10,7 +10,7 @@ from src.query.fast_querier import FastKGQuerier
 # ========== CONFIG ==========
 # Get API key from environment variable or use default (you should set this!)
 import os
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "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")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
 NEO4J_URI = "bolt://192.168.9.175:7687"  
 NEO4J_USERNAME = "neo4j"
